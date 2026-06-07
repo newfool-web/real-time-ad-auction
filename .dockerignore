@@ -1,0 +1,8 @@
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+**/.turbo
+.git
+.env
+*.log
+__pycache__/

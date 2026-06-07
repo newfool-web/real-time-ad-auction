@@ -1,0 +1,319 @@
+# Saari credentials/config .env se aati hain (${VAR}). .env gitignored hai.
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"] # persistence on
+    ports:
+      - "${REDIS_PORT}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Postgres is now CLOUD (Supabase) — see DATABASE_URL in .env. No local container/volume.
+
+  # ---- Kafka (KRaft, single node) — async event data plane ----
+  kafka:
+    image: apache/kafka:3.8.1
+    ports:
+      - "${KAFKA_PORT}:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      # Default 1G = Kafka's own default (LOCAL unchanged). On a small Droplet set
+      # KAFKA_HEAP_OPTS=-Xmx512m in .env to fit comfortably in 4 GB RAM.
+      KAFKA_HEAP_OPTS: ${KAFKA_HEAP_OPTS:--Xmx1G -Xms1G}
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  ml-service:
+    build:
+      context: ./api/ml-service
+    ports:
+      - "${ML_PORT}:8000"
+    environment:
+      USE_KAFKA: ${USE_KAFKA} # false -> Kafka consumer off, feedback via HTTP /feedback
+      KAFKA_BROKER: ${KAFKA_BROKER} # Phase 4: ad-feedback stream se retrain
+    depends_on:
+      kafka: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ---- Advertisers: same bidder image, alag brand config ----
+  # Sports advertisers (target "sports")
+  bidder-nike:
+    build: { context: ., dockerfile: api/bidder/Dockerfile }
+    environment:
+      PORT: 5001
+      BIDDER_ID: bidder-nike
+      BIDDER_NAME: Nike
+      AD_CATEGORY: sports
+      TARGET_INTERESTS: sports
+      CLICK_VALUE: 4.0
+      INITIAL_BUDGET: 40
+      REDIS_URL: ${REDIS_URL}
+      ML_SERVICE_URL: ${ML_SERVICE_URL}
+      CREATIVE_TITLE: "Nike - Just Do It"
+    depends_on:
+      redis: { condition: service_healthy }
+      ml-service: { condition: service_healthy }
+
+  bidder-adidas:
+    build: { context: ., dockerfile: api/bidder/Dockerfile }
+    environment:
+      PORT: 5002
+      BIDDER_ID: bidder-adidas
+      BIDDER_NAME: Adidas
+      AD_CATEGORY: sports
+      TARGET_INTERESTS: sports
+      CLICK_VALUE: 3.8
+      INITIAL_BUDGET: 40
+      REDIS_URL: ${REDIS_URL}
+      ML_SERVICE_URL: ${ML_SERVICE_URL}
+      CREATIVE_TITLE: "Adidas - Impossible is Nothing"
+    depends_on:
+      redis: { condition: service_healthy }
+      ml-service: { condition: service_healthy }
+
+  # Food advertiser (target "food")
+  bidder-mcdonalds:
+    build: { context: ., dockerfile: api/bidder/Dockerfile }
+    environment:
+      PORT: 5003
+      BIDDER_ID: bidder-mcdonalds
+      BIDDER_NAME: McDonald's
+      AD_CATEGORY: food
+      TARGET_INTERESTS: food
+      CLICK_VALUE: 3.0
+      INITIAL_BUDGET: 40
+      MIN_LATENCY_MS: 5
+      MAX_LATENCY_MS: 75
+      REDIS_URL: ${REDIS_URL}
+      ML_SERVICE_URL: ${ML_SERVICE_URL}
+      CREATIVE_TITLE: "McDonald's - I'm Lovin' It"
+    depends_on:
+      redis: { condition: service_healthy }
+      ml-service: { condition: service_healthy }
+
+  # Electronics advertiser (mobiles, tablets, fridges, washing machines)
+  bidder-samsung:
+    build: { context: ., dockerfile: api/bidder/Dockerfile }
+    environment:
+      PORT: 5004
+      BIDDER_ID: bidder-samsung
+      BIDDER_NAME: Samsung
+      AD_CATEGORY: electronics
+      TARGET_INTERESTS: electronics
+      CLICK_VALUE: 5.0
+      INITIAL_BUDGET: 50
+      MIN_LATENCY_MS: 5
+      MAX_LATENCY_MS: 75
+      REDIS_URL: ${REDIS_URL}
+      ML_SERVICE_URL: ${ML_SERVICE_URL}
+      CREATIVE_TITLE: "Samsung Galaxy - Next is Now"
+    depends_on:
+      redis: { condition: service_healthy }
+      ml-service: { condition: service_healthy }
+
+  bidder-yonex:
+    build: { context: ., dockerfile: api/bidder/Dockerfile }
+    environment:
+      PORT: 5005
+      BIDDER_ID: bidder-yonex
+      BIDDER_NAME: Yonex
+      AD_CATEGORY: sports
+      TARGET_INTERESTS: sports
+      CLICK_VALUE: 3.2
+      INITIAL_BUDGET: 35
+      REDIS_URL: ${REDIS_URL}
+      ML_SERVICE_URL: ${ML_SERVICE_URL}
+      CREATIVE_TITLE: "Yonex - Game. Set. Match."
+    depends_on:
+      redis: { condition: service_healthy }
+      ml-service: { condition: service_healthy }
+
+  # Luxury watches advertiser (target "watches")
+  bidder-rolex:
+    build: { context: ., dockerfile: api/bidder/Dockerfile }
+    environment:
+      PORT: 5006
+      BIDDER_ID: bidder-rolex
+      BIDDER_NAME: Rolex
+      AD_CATEGORY: watches
+      TARGET_INTERESTS: watches
+      CLICK_VALUE: 9.0
+      INITIAL_BUDGET: 60
+      REDIS_URL: ${REDIS_URL}
+      ML_SERVICE_URL: ${ML_SERVICE_URL}
+      CREATIVE_TITLE: "Rolex - A Crown for Every Achievement"
+    depends_on:
+      redis: { condition: service_healthy }
+      ml-service: { condition: service_healthy }
+
+  # Automobile advertiser (target "automobile")
+  bidder-bmw:
+    build: { context: ., dockerfile: api/bidder/Dockerfile }
+    environment:
+      PORT: 5007
+      BIDDER_ID: bidder-bmw
+      BIDDER_NAME: BMW
+      AD_CATEGORY: automobile
+      TARGET_INTERESTS: automobile
+      CLICK_VALUE: 8.0
+      INITIAL_BUDGET: 60
+      REDIS_URL: ${REDIS_URL}
+      ML_SERVICE_URL: ${ML_SERVICE_URL}
+      CREATIVE_TITLE: "BMW - Sheer Driving Pleasure"
+    depends_on:
+      redis: { condition: service_healthy }
+      ml-service: { condition: service_healthy }
+
+  # Beauty advertiser (target "beauty"; ML category "generic")
+  bidder-nykaa:
+    build: { context: ., dockerfile: api/bidder/Dockerfile }
+    environment:
+      PORT: 5008
+      BIDDER_ID: bidder-nykaa
+      BIDDER_NAME: Nykaa
+      AD_CATEGORY: beauty
+      TARGET_INTERESTS: beauty
+      CLICK_VALUE: 4.0
+      INITIAL_BUDGET: 40
+      MIN_LATENCY_MS: 5
+      MAX_LATENCY_MS: 75
+      REDIS_URL: ${REDIS_URL}
+      ML_SERVICE_URL: ${ML_SERVICE_URL}
+      CREATIVE_TITLE: "Nykaa - Your Beauty Destination"
+    depends_on:
+      redis: { condition: service_healthy }
+      ml-service: { condition: service_healthy }
+
+  auction-engine:
+    build:
+      context: .
+      dockerfile: api/auction-engine/Dockerfile
+    ports:
+      - "${ENGINE_PORT}:4000"
+    environment:
+      ENGINE_PORT: 4000
+      AUCTION_TIMEOUT_MS: ${AUCTION_TIMEOUT_MS}
+      REDIS_URL: ${REDIS_URL}
+      USE_KAFKA: ${USE_KAFKA} # true -> via Kafka; false -> engine direct (Postgres/Redis/Socket.IO/HTTP)
+      KAFKA_BROKER: ${KAFKA_BROKER}
+      # DIRECT mode needs these (ignored in Kafka mode):
+      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_SSL: ${DATABASE_SSL}
+      ML_SERVICE_URL: ${ML_SERVICE_URL}
+      # id|url|displayName  (8 brand advertisers)
+      BIDDERS: "bidder-nike|http://bidder-nike:5001|Nike,bidder-adidas|http://bidder-adidas:5002|Adidas,bidder-mcdonalds|http://bidder-mcdonalds:5003|McDonald's,bidder-samsung|http://bidder-samsung:5004|Samsung,bidder-yonex|http://bidder-yonex:5005|Yonex,bidder-rolex|http://bidder-rolex:5006|Rolex,bidder-bmw|http://bidder-bmw:5007|BMW,bidder-nykaa|http://bidder-nykaa:5008|Nykaa"
+    depends_on:
+      redis: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      bidder-nike: { condition: service_started }
+      bidder-adidas: { condition: service_started }
+      bidder-mcdonalds: { condition: service_started }
+      bidder-samsung: { condition: service_started }
+      bidder-yonex: { condition: service_started }
+      bidder-rolex: { condition: service_started }
+      bidder-bmw: { condition: service_started }
+      bidder-nykaa: { condition: service_started }
+
+  # ---- Stream consumer: auction-events -> Postgres history (cloud Supabase) ----
+  history-writer:
+    build:
+      context: .
+      dockerfile: api/history-writer/Dockerfile
+    restart: unless-stopped # transient startup race ho to self-heal
+    environment:
+      KAFKA_BROKER: ${KAFKA_BROKER}
+      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_SSL: ${DATABASE_SSL}
+    depends_on:
+      kafka: { condition: service_healthy }
+
+  # ---- Phase 2: socket gateway (ui-events -> dashboard via Socket.IO) ----
+  socket-gateway:
+    build:
+      context: .
+      dockerfile: api/socket-gateway/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${GATEWAY_PORT}:4200"
+    environment:
+      PORT: 4200
+      KAFKA_BROKER: ${KAFKA_BROKER}
+    depends_on:
+      kafka: { condition: service_healthy }
+
+  # ---- Phase 3: budget pacing (auction-events -> Redis, eventually consistent) ----
+  pacing-service:
+    build:
+      context: .
+      dockerfile: api/pacing-service/Dockerfile
+    restart: unless-stopped
+    environment:
+      KAFKA_BROKER: ${KAFKA_BROKER}
+      REDIS_URL: ${REDIS_URL}
+    depends_on:
+      kafka: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: client/Dockerfile
+      args:
+        # Default = localhost (LOCAL, unchanged). For a public deploy (e.g. DigitalOcean Droplet)
+        # set PUBLIC_ENGINE_URL / PUBLIC_GATEWAY_URL in .env to http://<droplet-ip>:<port>.
+        VITE_ENGINE_URL: ${PUBLIC_ENGINE_URL:-http://localhost:${ENGINE_PORT}} # REST (control plane)
+        VITE_GATEWAY_URL: ${PUBLIC_GATEWAY_URL:-http://localhost:${GATEWAY_PORT}} # live events
+    ports:
+      - "${DASHBOARD_PORT}:5173"
+    depends_on:
+      - auction-engine
+      - socket-gateway
+
+  # ---- Data browsers (Atlas-jaisa GUI) ----
+  # Postgres is cloud (Supabase) now — browse it in Supabase's own Table Editor / SQL Editor.
+  # (Local Adminer removed; it was for the local Postgres container.)
+
+  redisinsight: # Redis web UI — budgets/stats dekhne ke liye
+    image: redis/redisinsight:latest
+    ports:
+      - "${REDISINSIGHT_PORT}:5540"
+    depends_on:
+      - redis
+
+  kafka-ui: # Kafka web UI — topics aur events live dekhne ke liye
+    image: provectuslabs/kafka-ui:latest
+    ports:
+      - "${KAFKA_UI_PORT}:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: rtb
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      DYNAMIC_CONFIG_ENABLED: "true"
+    depends_on:
+      kafka: { condition: service_healthy }
+
+volumes:
+  redisdata: # redis AOF persistence (postgres ab cloud hai, koi pgdata volume nahi)
