@@ -4,14 +4,22 @@ import { AuctionFlow } from "./components/AuctionFlow";
 import { MetricsPanel } from "./components/MetricsPanel";
 import { simulateVisit, setTraffic } from "./api";
 
+const AUTO_TRAFFIC_DISABLED = true;
+
 export default function App() {
   const { connected, current, winningCreative, metrics, winHistory } = useAuctionSocket();
   const [auto, setAuto] = useState(false);
+  const [showTrafficDisabled, setShowTrafficDisabled] = useState(false);
 
   const toggleTraffic = async () => {
+    if (AUTO_TRAFFIC_DISABLED) {
+      setShowTrafficDisabled(true);
+      return;
+    }
+
     const next = !auto;
     setAuto(next);
-    await setTraffic(next ? 1 : 0); // 1 auction/sec — har step padhne layak
+    await setTraffic(next ? 1 : 0);
   };
 
   return (
@@ -36,11 +44,15 @@ export default function App() {
               Simulate Visit
             </button>
             <button
+              type="button"
               onClick={toggleTraffic}
+              aria-disabled={AUTO_TRAFFIC_DISABLED}
               className={`px-4 py-2 rounded-md text-sm font-medium transition border ${
-                auto
-                  ? "bg-red-600/90 hover:bg-red-600 border-transparent"
-                  : "bg-slate-800 hover:bg-slate-700 border-slate-700"
+                AUTO_TRAFFIC_DISABLED
+                  ? "bg-slate-800/60 border-slate-700 text-slate-400 cursor-not-allowed hover:bg-slate-800/60"
+                  : auto
+                    ? "bg-red-600/90 hover:bg-red-600 border-transparent"
+                    : "bg-slate-800 hover:bg-slate-700 border-slate-700"
               }`}
             >
               {auto ? "Stop Auto Traffic" : "Auto Traffic"}
@@ -69,6 +81,26 @@ export default function App() {
           <MetricsPanel metrics={metrics} winHistory={winHistory} />
         </section>
       </main>
+
+      {showTrafficDisabled && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 px-4">
+          <div className="w-full max-w-sm rounded-lg border border-slate-700 bg-slate-900 p-5 shadow-2xl">
+            <h3 className="text-base font-semibold text-slate-100">Auto Traffic Disabled</h3>
+            <p className="mt-2 text-sm leading-6 text-slate-300">
+              This button is disabled because of irregular practice by users.
+            </p>
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowTrafficDisabled(false)}
+                className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500"
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
